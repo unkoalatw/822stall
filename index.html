@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <title>園遊會訂購系統</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <script>
+    // 定義 API 網址 (已更新為你的 GAS 網址)
+    const API_URL = 'https://script.google.com/macros/s/AKfycbySm6lzRRBA30Ga0qQN_I4mi0szqMXQNwKzTJmfwRLVeree-A_VqDGudrmRTu7wUGc2/exec';
+
+    document.addEventListener('alpine:init', () => {
+      Alpine.data('fairApp', () => ({
+        view: 'shop', 
+        lang: 'zh', 
+        loading: true, 
+        cart: [], 
+        products: [], 
+        // 增加新的訂購人欄位
+        orderForm: { 
+          name: '', 
+          phone: '', 
+          identity: 'student', // 預設為學生
+          class: '', 
+          seat: '' 
+        }, 
+        successShow: false,
+        submitting: false,
+        
+        async init() {
+          try {
+            const res = await fetch(`${API_URL}?action=getAppData`);
+            const json = await res.json();
+            if (json.status === 'success') {
+              this.products = json.data.products || [];
+            }
+          } catch (err) {
+            console.error("無法載入商品資料:", err);
+          } finally {
+            this.loading = false;
+          }
+        },
+
+        async checkout() {
+          // 驗證邏輯
+          if (!this.orderForm.name || !this.orderForm.phone || !this.orderForm.class) {
+            alert('請填寫完整姓名、電話與班級');
+            return;
+          }
+          // 如果是學生，必須填寫座號
+          if (this.orderForm.identity === 'student' && !this.orderForm.seat) {
+            alert('學生請填寫座號');
+            return;
+          }
+          if (this.cart.length === 0) return;
+
+          this.submitting = true;
+          try {
+            await fetch(API_URL, {
+              method: 'POST',
+              mode: 'no-cors',
+              body: JSON.stringify({
+                action: 'submitOrder',
+                data: { 
+                  name: this.orderForm.name, 
+                  phone: this.orderForm.phone, 
+                  identity: this.orderForm.identity,
+                  class: this.orderForm.class,
+                  seat: this.orderForm.identity === 'teacher' ? '' : this.orderForm.seat,
+                  items: this.cart, 
+                  total: this.cartTotal 
+                }
+              })
+            });
+            
+            this.successShow = true;
+            this.cart = [];
+            // 重置表單
+            this.orderForm = { name: '', phone: '', identity: 'student', class: '', seat: '' };
+          } catch (err) {
+            console.error("訂單提交失敗:", err);
+            alert("訂單提交失敗，請稍後再試");
+          } finally {
+            this.submitting = false;
+          }
+        },
+
+        addToCart(p) {
+          const exist = this.cart.find(i => i.id === p.id);
+          if (exist) {
+            exist.quantity++;
+          } else {
+            this.cart.push({ ...p, quantity: 1 });
+          }
+        },
+
+        removeFromCart(index) {
+          this.cart.splice(index, 1);
+        },
+
+        get cartTotal() { 
+          return this.cart.reduce((s, i) => s + (i.price * i.quantity), 0); 
+        }
+      }));
+    });
+  </script>
+  
+  <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+
+  <style>
+    [x-cloak] { display: none !important; }
+  </style>
+</head>
+<body class="bg-slate-50 p-4 md:p-8" x-data="fairApp" x-cloak>
+  <div class="max-w-4xl mx-auto bg-white rounded-3xl shadow-sm border border-slate-100 p-6 md:p-10">
+    <header class="mb-8 border-b border-slate-100 pb-6 flex justify-between items-center">
+      <div>
+        <h1 class="text-3xl font-bold text-slate-800">園遊會美食預訂</h1>
+        <p class="text-slate-500 mt-1 text-sm">請填寫正確資訊以利後續配送與收費</p>
+      </div>
+      <div x-show="loading" class="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+    </header>
+
+    <div class="grid md:grid-cols-5 gap-10">
+      <!-- 商品列表 -->
+      <div class="md:col-span-3">
+        <h2 class="text-xl font-bold mb-6 flex items-center gap-2">
+          <span class="w-1.5 h-6 bg-blue-600 rounded-full"></span>
+          商品列表
+        </h2>
+        <div class="space-y-4">
+          <template x-for="p in products" :key="p.id">
+            <div class="bg-white border border-slate-100 p-4 rounded-2xl flex justify-between items-center hover:shadow-md transition group">
+              <div class="flex-1">
+                <p class="font-bold text-slate-800 text-lg group-hover:text-blue-600 transition" x-text="p.name"></p>
+                <p class="text-sm text-slate-500 mt-0.5" x-text="p.description"></p>
+                <div class="mt-2 flex items-center gap-3">
+                  <span class="text-blue-600 font-extrabold text-lg">$<span x-text="p.price"></span></span>
+                  <span class="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded" x-text="p.category"></span>
+                </div>
+              </div>
+              <button @click="addToCart(p)" class="bg-slate-900 text-white w-10 h-10 rounded-xl flex items-center justify-center hover:bg-blue-600 active:scale-90 transition shadow-sm">
+                ＋
+              </button>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- 購物車與訂購人資訊 -->
+      <div class="md:col-span-2 space-y-6">
+        <div class="bg-slate-50 p-6 rounded-3xl border border-slate-100 sticky top-8">
+          <h2 class="text-xl font-bold mb-6 flex items-center justify-between">
+            我的購物車
+            <span class="text-xs bg-white px-2 py-1 rounded-full text-slate-400" x-text="cart.length + ' 項'"></span>
+          </h2>
+          
+          <!-- 品項清單 -->
+          <div class="space-y-3 mb-6 max-h-48 overflow-y-auto pr-2">
+            <template x-for="(i, index) in cart" :key="index">
+              <div class="flex justify-between items-center text-sm">
+                <div class="flex-1">
+                  <span class="font-medium text-slate-700" x-text="i.name"></span>
+                  <span class="text-slate-400 ml-1" x-text="'x' + i.quantity"></span>
+                </div>
+                <div class="flex items-center gap-3">
+                  <span class="font-bold text-slate-800" x-text="'$' + (i.price * i.quantity)"></span>
+                  <button @click="removeFromCart(index)" class="text-red-400 hover:text-red-600 text-xs">✕</button>
+                </div>
+              </div>
+            </template>
+            <div x-show="cart.length === 0" class="text-slate-400 text-center py-6 text-sm italic">購物車是空的</div>
+          </div>
+
+          <div class="border-t border-slate-200 pt-4 mb-8">
+            <div class="font-bold text-xl flex justify-between text-slate-900">
+              <span>總計金額</span>
+              <span x-text="'$' + cartTotal"></span>
+            </div>
+          </div>
+
+          <!-- 訂購資訊表單 -->
+          <div class="space-y-4">
+            <!-- 身分選擇 -->
+            <div class="flex bg-white p-1 rounded-xl border border-slate-200">
+              <button @click="orderForm.identity = 'student'" 
+                      :class="orderForm.identity === 'student' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'"
+                      class="flex-1 py-2 rounded-lg text-xs font-bold transition">學生</button>
+              <button @click="orderForm.identity = 'teacher'" 
+                      :class="orderForm.identity === 'teacher' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'"
+                      class="flex-1 py-2 rounded-lg text-xs font-bold transition">老師</button>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-[10px] font-bold text-slate-400 uppercase ml-1 mb-1">姓名</label>
+                <input type="text" x-model="orderForm.name" placeholder="姓名" class="w-full border border-slate-200 p-2.5 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 transition bg-white">
+              </div>
+              <div>
+                <label class="block text-[10px] font-bold text-slate-400 uppercase ml-1 mb-1">班級 (如: 822)</label>
+                <input type="text" x-model="orderForm.class" placeholder="班級" class="w-full border border-slate-200 p-2.5 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 transition bg-white">
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+              <div x-show="orderForm.identity === 'student'" x-transition>
+                <label class="block text-[10px] font-bold text-slate-400 uppercase ml-1 mb-1">座號</label>
+                <input type="number" x-model="orderForm.seat" placeholder="座號" class="w-full border border-slate-200 p-2.5 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 transition bg-white">
+              </div>
+              <div :class="orderForm.identity === 'teacher' ? 'col-span-2' : ''">
+                <label class="block text-[10px] font-bold text-slate-400 uppercase ml-1 mb-1">聯絡電話</label>
+                <input type="text" x-model="orderForm.phone" placeholder="電話" class="w-full border border-slate-200 p-2.5 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 transition bg-white">
+              </div>
+            </div>
+
+            <button @click="checkout" 
+                    :disabled="submitting || cart.length === 0"
+                    class="w-full bg-blue-600 text-white py-4 rounded-2xl font-bold text-lg hover:bg-blue-700 disabled:opacity-50 transition shadow-lg shadow-blue-100 flex items-center justify-center gap-2 mt-4">
+              <span x-show="submitting" class="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full"></span>
+              <span x-text="submitting ? '提交中...' : '送出訂單'"></span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 成功提示 -->
+  <div x-show="successShow" x-transition.opacity class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" x-cloak>
+    <div class="bg-white p-8 rounded-[2.5rem] text-center max-w-sm w-full shadow-2xl" @click.away="successShow = false">
+      <div class="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-6 text-3xl">✓</div>
+      <h3 class="text-2xl font-bold mb-4 text-slate-800">預訂成功！</h3>
+      <div class="bg-slate-50 p-5 rounded-2xl text-slate-600 text-sm leading-relaxed mb-8">
+        請務必於 <span class="text-blue-600 font-bold">3 月 21 日</span> 前到 <span class="text-blue-600 font-bold">822 班教室</span> 完成繳費，以確保訂單成立。
+      </div>
+      <button @click="successShow = false" class="w-full bg-slate-900 text-white py-3.5 rounded-xl font-bold hover:bg-slate-800 transition">完成</button>
+    </div>
+  </div>
+</body>
+</html>
