@@ -2,236 +2,398 @@
 <html lang="zh-TW">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://unpkg.com https://cdnjs.cloudflare.com; img-src 'self' data: blob: *; connect-src 'self' https://script.google.com https://script.googleusercontent.com;">
-  <title>園遊會商家管理</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <!-- 強化的 CSP 設定：允許連線至 Google Script 與 載入必要的庫 -->
+  <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://unpkg.com https://cdnjs.cloudflare.com; img-src 'self' data: blob: *; worker-src 'self' blob: *; connect-src 'self' https://script.google.com https://script.googleusercontent.com https://cdnjs.cloudflare.com;">
+  
+  <title>822 商家管理系統</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-  <script>
-    const API_URL = 'https://script.google.com/macros/s/AKfycbySm6lzRRBA30Ga0qQN_I4mi0szqMXQNwKzTJmfwRLVeree-A_VqDGudrmRTu7wUGc2/exec';
-
-    document.addEventListener('alpine:init', () => {
-      Alpine.data('adminApp', () => ({
-        isLoggedIn: false,
-        password: '',
-        activeTab: 'orders',
-        orders: [], products: [], stats: { totalOrders: 0, totalRevenue: 0, paidRevenue: 0, ranking: [] },
-        loading: false, submitting: false,
-        showProductModal: false, isEditing: false,
-        productForm: { id: '', name: '', price: 0, description: '', category: '熱食', stock: 100, customCategory: '' },
-        defaultCategories: ['熱食', '飲品', '點心', '遊戲', '其他'],
-        showReceiptModal: false, activeReceipt: null,
-        showCancelModal: false, cancelReason: '', targetOrder: null,
-
-        async init() {
-          const savedPass = sessionStorage.getItem('admin_pwd');
-          if (savedPass) {
-            this.password = savedPass;
-            await this.tryLogin();
-          }
-        },
-
-        async tryLogin() {
-          this.loading = true;
-          try {
-            const res = await fetch(`${API_URL}?action=checkLogin&pwd=${encodeURIComponent(this.password)}`);
-            const json = await res.json();
-            if (json.status === 'success') {
-              this.isLoggedIn = true;
-              sessionStorage.setItem('admin_pwd', this.password);
-              await this.refresh();
-            } else {
-              alert("密碼不正確");
-              sessionStorage.removeItem('admin_pwd');
-            }
-          } catch (e) { alert("連線失敗"); }
-          finally { this.loading = false; }
-        },
-
-        async refresh() {
-          if (!this.isLoggedIn) return;
-          this.loading = true;
-          try {
-            const res = await fetch(`${API_URL}?action=getAppData&pwd=${encodeURIComponent(this.password)}`);
-            const json = await res.json();
-            this.orders = json.data.orders;
-            this.products = json.data.products;
-            const sRes = await fetch(`${API_URL}?action=getSalesStats&pwd=${encodeURIComponent(this.password)}`);
-            this.stats = (await sRes.json()).data;
-          } finally { this.loading = false; }
-        },
-
-        async postAction(payload) {
-          this.submitting = true;
-          try {
-            await fetch(API_URL, {
-              method: 'POST',
-              mode: 'no-cors',
-              body: JSON.stringify({ ...payload, pwd: this.password })
-            });
-            setTimeout(() => { this.refresh(); this.submitting = false; }, 1200);
-          } catch (e) { this.submitting = false; }
-        },
-
-        async updateStatus(id, s) { await this.postAction({ action: 'updateOrderStatus', orderId: id, newStatus: s }); },
-        async submitCancel() { 
-          await this.postAction({ action: 'cancelOrder', orderId: this.targetOrder.id, reason: this.cancelReason });
-          this.showCancelModal = false; this.cancelReason = '';
-        },
-        async saveProduct() {
-          let cat = this.productForm.category === '自定義' ? this.productForm.customCategory : this.productForm.category;
-          await this.postAction({ action: this.isEditing ? 'updateProduct' : 'addProduct', data: { ...this.productForm, category: cat } });
-          this.showProductModal = false;
-        },
-        async deleteProduct(id) { if(confirm('確定刪除？')) await this.postAction({ action: 'deleteProduct', id }); },
-        
-        openAddModal() { this.isEditing = false; this.productForm = { id: '', name: '', price: 0, description: '', category: '熱食', stock: 100 }; this.showProductModal = true; },
-        openEditModal(p) { this.isEditing = true; this.productForm = { ...p }; this.showProductModal = true; },
-        viewReceipt(o) { this.activeReceipt = o; this.showReceiptModal = true; },
-        downloadPDF() {
-          const opt = { margin: 1, filename: `Receipt_${this.activeReceipt.id}.pdf`, html2canvas: { scale: 2 }, jsPDF: { unit: 'in', format: 'letter' } };
-          html2pdf().set(opt).from(document.getElementById('admin-print-receipt')).save();
-        },
-        logout() { sessionStorage.removeItem('admin_pwd'); location.reload(); }
-      }));
-    });
-  </script>
+  
   <style>
-    [x-cloak] { display: none !important; }
+    [v-cloak] { display: none; }
     .loading-bar { height: 4px; background: #3b82f6; animation: barProgress 1.5s infinite ease-in-out; }
     @keyframes barProgress { 0% { width: 0%; } 100% { width: 100%; } }
+    
+    @media print {
+      body * { visibility: hidden !important; }
+      #print-canvas, #print-canvas * { visibility: visible !important; }
+      #print-canvas { position: absolute; left: 0; top: 0; width: 100% !important; border: none !important; padding: 20px !important; margin: 0 !important; }
+      .no-print { display: none !important; }
+    }
+    
+    .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+    .modal-scroll { max-height: calc(100vh - 160px); overflow-y: auto; }
+
+    .scale-in { animation: scaleIn 0.3s ease-out; }
+    @keyframes scaleIn {
+      from { transform: scale(0.9); opacity: 0; }
+      to { transform: scale(1); opacity: 1; }
+    }
   </style>
 </head>
-<body class="bg-slate-100 text-slate-900 font-sans antialiased" x-data="adminApp" x-cloak>
+<body class="bg-slate-50 text-slate-900 font-sans antialiased">
+  <div id="app" v-cloak>
+    
+    <!-- 全局提示訊息條 -->
+    <div v-if="msg.show" class="fixed top-5 left-1/2 -translate-x-1/2 z-[500] w-full max-w-xs transition-all duration-300">
+      <div :class="msg.type === 'error' ? 'bg-red-500 shadow-xl' : 'bg-slate-800 shadow-xl'" class="text-white px-6 py-4 rounded-3xl flex items-center justify-between">
+        <span class="font-black text-sm tracking-tight">{{ msg.content }}</span>
+        <button @click="msg.show = false" class="ml-4 opacity-50 hover:opacity-100 transition text-xl">✕</button>
+      </div>
+    </div>
 
-  <!-- 登入畫面 -->
-  <template x-if="!isLoggedIn">
-    <div class="fixed inset-0 bg-slate-900 flex items-center justify-center p-6 z-[300]">
-      <div class="bg-white rounded-[2.5rem] p-10 max-w-sm w-full shadow-2xl text-center">
+    <!-- 1. 登入介面 -->
+    <div v-if="!isLoggedIn" class="fixed inset-0 bg-slate-900 z-[300] flex items-center justify-center p-6">
+      <div class="bg-white rounded-[3rem] p-12 max-w-sm w-full shadow-2xl text-center relative overflow-hidden scale-in">
         <div class="w-20 h-20 bg-blue-50 text-blue-600 rounded-3xl flex items-center justify-center mx-auto mb-8 text-3xl font-black italic shadow-inner">8</div>
-        <h2 class="text-3xl font-black mb-2 tracking-tighter text-slate-800">商家管理登入</h2>
-        <p class="text-slate-400 text-sm font-bold uppercase tracking-widest mb-8">Enter Admin Password</p>
-        <input type="password" x-model="password" @keyup.enter="tryLogin" placeholder="請輸入密碼" class="w-full border border-slate-100 p-5 rounded-2xl mb-6 bg-slate-50 font-bold text-center outline-none focus:ring-4 focus:ring-blue-100 transition text-lg">
-        <button @click="tryLogin" class="w-full bg-blue-600 text-white py-5 rounded-2xl font-black text-lg shadow-xl shadow-blue-200 hover:bg-blue-700 transition active:scale-95" :disabled="loading">
-          <span x-show="!loading">啟動管理面板</span>
-          <span x-show="loading" class="flex items-center justify-center gap-2"><svg class="animate-spin h-5 w-5 border-2 border-white border-t-transparent rounded-full"></svg> 驗證中</span>
+        <h2 class="text-3xl font-black mb-2 tracking-tighter text-slate-800 uppercase">Merchant Login</h2>
+        <p class="text-slate-400 text-xs font-black uppercase tracking-[0.2em] mb-10 opacity-70">商家權限登入</p>
+        
+        <input type="password" v-model="password" @keyup.enter="tryLogin" placeholder="請輸入管理密碼" class="w-full border border-slate-100 p-5 rounded-[1.5rem] mb-6 bg-slate-50 font-black text-center outline-none focus:ring-8 focus:ring-blue-50 transition-all text-xl tracking-widest">
+        
+        <button @click="tryLogin" class="w-full bg-blue-600 text-white py-5 rounded-[1.5rem] font-black text-lg shadow-2xl shadow-blue-200 hover:bg-blue-700 transition active:scale-95 disabled:opacity-50" :disabled="loading">
+          <span v-if="!loading">啟動管理面板</span>
+          <span v-else class="flex items-center justify-center gap-3"><svg class="animate-spin h-5 w-5 border-2 border-white border-t-transparent rounded-full" viewBox="0 0 24 24"></svg> 正在登入...</span>
         </button>
       </div>
     </div>
-  </template>
 
-  <!-- 加載動畫 (與前台一致) -->
-  <div x-show="submitting" class="fixed inset-0 z-[150] no-print">
-    <div class="loading-bar w-full absolute top-0 left-0"></div>
-    <div class="absolute inset-0 bg-white/70 backdrop-blur-sm flex flex-col items-center justify-center text-center">
-       <div class="w-14 h-14 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-6"></div>
-       <p class="font-black text-blue-600 tracking-tight">正在同步雲端資料庫...</p>
+    <!-- 2. 全局同步遮罩 -->
+    <div v-if="submitting" class="fixed inset-0 z-[150] bg-white/80 backdrop-blur-md flex flex-col items-center justify-center no-print tracking-widest">
+      <div class="loading-bar w-full absolute top-0 left-0"></div>
+      <div class="animate-spin rounded-full h-16 w-16 border-4 border-blue-600 border-t-transparent mb-6 shadow-2xl"></div>
+      <p class="font-black text-blue-600 uppercase text-xs">Syncing Cloud Database</p>
     </div>
-  </div>
 
-  <!-- 主內容區 -->
-  <template x-if="isLoggedIn">
-    <div class="max-w-6xl mx-auto p-4 md:p-8 pb-24">
-      <div class="flex justify-between items-center mb-10">
+    <!-- 3. 管理主頁面 -->
+    <div v-if="isLoggedIn" class="max-w-6xl mx-auto p-4 md:p-8 pb-24 transition-opacity duration-700 no-print">
+      <header class="flex flex-col sm:flex-row justify-between sm:items-center mb-10 gap-6">
         <div>
-          <h1 class="text-3xl font-black text-slate-800 tracking-tighter">822 商家控制台</h1>
-          <div class="flex items-center gap-2 text-slate-400 text-[10px] font-bold uppercase tracking-widest mt-1">
-             <span class="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span> 連線中 (Connected)
-          </div>
+          <h1 class="text-4xl font-black tracking-tighter text-slate-800 italic uppercase">822 Merchant Hub</h1>
+          <p class="text-[10px] text-slate-400 font-black uppercase tracking-widest mt-1">
+            <span class="inline-block w-2 h-2 bg-emerald-500 rounded-full mr-1 animate-pulse"></span> 連線正常
+          </p>
         </div>
         <div class="flex gap-3">
-           <button @click="refresh" class="bg-white p-3 rounded-xl border border-slate-200 text-slate-400 hover:text-blue-600 transition"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg></button>
-           <button @click="logout" class="bg-white px-4 py-2 rounded-xl border border-slate-200 text-red-400 font-bold text-xs hover:bg-red-50 transition">登出</button>
+           <button @click="refresh" class="bg-white p-3 rounded-2xl border border-slate-200 text-slate-400 hover:text-blue-600 transition shadow-sm active:scale-90">
+             <svg class="w-6 h-6" :class="{'animate-spin': loading}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+           </button>
+           <button @click="logout" class="bg-white px-6 py-3 rounded-2xl border border-slate-200 text-red-500 font-black text-[11px] uppercase tracking-widest shadow-sm hover:bg-red-50 transition active:scale-95">登出</button>
         </div>
-      </div>
+      </header>
 
-      <!-- 統計與排行 -->
-      <div class="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-10">
-        <div class="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm"><p class="text-[10px] text-slate-400 font-black uppercase tracking-widest">總有效訂單</p><p class="text-3xl font-black mt-1" x-text="stats.totalOrders"></p></div>
-        <div class="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm"><p class="text-[10px] text-blue-400 font-black uppercase tracking-widest">預估營收</p><p class="text-3xl font-black mt-1 text-blue-600" x-text="'$' + stats.totalRevenue"></p></div>
-        <div class="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm"><p class="text-[10px] text-emerald-400 font-black uppercase tracking-widest">已收現金</p><p class="text-3xl font-black mt-1 text-emerald-600" x-text="'$' + stats.paidRevenue"></p></div>
-        <div class="bg-slate-900 p-6 rounded-3xl shadow-xl text-white">
-           <p class="text-[10px] text-slate-400 font-black uppercase tracking-widest mb-3">🔥 熱銷排行 Top 3</p>
-           <template x-for="(rank, idx) in stats.ranking.slice(0,3)" :key="idx">
-              <div class="flex justify-between text-xs mb-1.5 font-bold">
-                 <span x-text="(idx+1) + '. ' + rank[0]"></span>
-                 <span class="text-blue-400" x-text="rank[1] + '份'"></span>
+      <!-- 儀表板 -->
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
+        <div class="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm"><p class="text-[10px] text-slate-400 font-black uppercase tracking-widest">總訂單數</p><p class="text-4xl font-black mt-1 text-slate-800">{{ stats.totalOrders }}</p></div>
+        <div class="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm"><p class="text-[10px] text-blue-400 font-black uppercase tracking-widest">預估總額</p><p class="text-4xl font-black mt-1 text-blue-600">${{ stats.totalRevenue }}</p></div>
+        <div class="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm"><p class="text-[10px] text-emerald-400 font-black uppercase tracking-widest">實收金額</p><p class="text-4xl font-black mt-1 text-emerald-600">${{ stats.paidRevenue }}</p></div>
+        <div class="bg-slate-900 p-8 rounded-[2.5rem] text-white shadow-2xl relative overflow-hidden group">
+           <p class="text-[10px] text-slate-500 font-black uppercase tracking-widest mb-4">🔥 熱銷排行</p>
+           <div class="space-y-2 relative z-10">
+              <div v-for="(rank, idx) in stats.ranking.slice(0,3)" :key="idx" class="flex justify-between text-xs font-black">
+                 <span class="truncate pr-4">{{ idx + 1 }}. {{ rank[0] }}</span>
+                 <span class="text-blue-400 shrink-0">{{ rank[1] }}份</span>
               </div>
-           </template>
+           </div>
+           <div class="absolute -right-4 -bottom-4 font-black text-7xl text-white opacity-[0.03] rotate-12 transition-transform duration-700 group-hover:rotate-0">TOP</div>
         </div>
       </div>
 
-      <!-- 切換頁籤與列表 -->
-      <div class="mb-8 flex gap-8 border-b border-slate-200">
-        <button @click="activeTab = 'orders'" class="pb-4 px-1 font-black text-sm transition" :class="activeTab === 'orders' ? 'border-b-4 border-blue-600 text-blue-600' : 'text-slate-400'">訂單管理</button>
-        <button @click="activeTab = 'products'" class="pb-4 px-1 font-black text-sm transition" :class="activeTab === 'products' ? 'border-b-4 border-blue-600 text-blue-600' : 'text-slate-400'">品項配置</button>
+      <!-- 切換按鈕 -->
+      <div class="mb-8 flex gap-12 border-b border-slate-200 font-black text-sm uppercase tracking-widest">
+        <button @click="activeTab = 'orders'" class="pb-4 px-1 transition-all border-b-4" :class="activeTab === 'orders' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400'">訂單管理</button>
+        <button @click="activeTab = 'products'" class="pb-4 px-1 transition-all border-b-4" :class="activeTab === 'products' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400'">餐點配置</button>
       </div>
 
-      <div class="bg-white rounded-[2.5rem] shadow-sm border border-slate-200 overflow-hidden">
-        <!-- 訂單列表 (包含商家取消原因顯示) -->
-        <div x-show="activeTab === 'orders'">
-          <div class="overflow-x-auto">
-            <table class="w-full text-left">
-              <thead class="bg-slate-50 border-b text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                <tr><th class="p-6">訂購人 / 資訊</th><th class="p-6">購買內容</th><th class="p-6">金額</th><th class="p-6">狀態 / 原因</th><th class="p-6 text-right">操作</th></tr>
-              </thead>
-              <tbody class="divide-y text-sm font-medium">
-                <template x-for="o in orders" :key="o.id">
-                  <tr class="hover:bg-slate-50/50 transition-colors">
-                    <td class="p-6">
-                      <p class="font-black text-slate-800" x-text="o.name"></p>
-                      <p class="text-[10px] text-slate-400 font-bold" x-text="o.class + '班 ' + (o.seat ? o.seat+'號' : '(老師)')"></p>
-                    </td>
-                    <td class="p-6">
-                      <template x-for="i in o.items"><span class="inline-block bg-blue-50 text-blue-600 rounded px-1.5 py-0.5 mr-1 mb-1 border border-blue-100 text-[10px] font-black" x-text="i.name + 'x' + i.quantity"></span></template>
-                    </td>
-                    <td class="p-6 font-black" x-text="'$' + o.total"></td>
-                    <td class="p-6">
-                      <span class="px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider" 
-                            :class="{ 'bg-amber-100 text-amber-600': o.status === 'pending', 'bg-emerald-100 text-emerald-600': o.status === 'paid', 'bg-red-100 text-red-600': o.status === 'cancelled' }" x-text="o.status"></span>
-                      <p x-show="o.cancelReason" class="text-[10px] text-red-400 mt-1 italic font-bold" x-text="'取消: ' + o.cancelReason"></p>
-                    </td>
-                    <td class="p-6 text-right">
-                       <div class="flex flex-col items-end gap-2">
-                          <div class="flex gap-3 items-center">
-                             <button @click="viewReceipt(o)" class="text-blue-600 font-black underline text-[11px] uppercase tracking-tighter">檢視</button>
-                             <button x-show="o.status === 'pending'" @click="updateStatus(o.id, 'paid')" class="bg-emerald-500 text-white text-[10px] px-4 py-1.5 rounded-xl font-black shadow-lg shadow-emerald-50 transition active:scale-95">收款</button>
-                          </div>
-                          <button x-show="o.status === 'pending'" @click="targetOrder = o; showCancelModal = true" class="text-red-400 hover:text-red-600 font-bold text-[10px] underline">商家取消</button>
-                       </div>
-                    </td>
-                  </tr>
-                </template>
-              </tbody>
-            </table>
-          </div>
+      <!-- 列表容器 -->
+      <div class="bg-white rounded-[3rem] border border-slate-200 overflow-hidden shadow-xl shadow-slate-100">
+        
+        <!-- 訂單列表 -->
+        <div v-if="activeTab === 'orders'" class="overflow-x-auto">
+          <table class="w-full text-left border-collapse">
+            <thead class="bg-slate-50/50 border-b text-[10px] font-black text-slate-400 uppercase tracking-widest">
+              <tr><th class="p-8 whitespace-nowrap">客戶資訊</th><th class="p-8">內容</th><th class="p-8">應收</th><th class="p-8">狀態</th><th class="p-8 text-right">操作</th></tr>
+            </thead>
+            <tbody class="divide-y text-sm font-bold">
+              <tr v-for="o in sortedOrders" :key="o.id" class="hover:bg-slate-50/30 transition-colors">
+                <td class="p-8">
+                  <p class="font-black text-slate-800 text-lg tracking-tighter">{{ o.name }}</p>
+                  <p class="text-[10px] text-slate-400 font-black uppercase mt-1">
+                    {{ o.class }} 班 {{ o.seat ? o.seat + ' 號' : '(老師)' }}
+                  </p>
+                </td>
+                <td class="p-8">
+                  <div class="flex flex-wrap gap-1 max-w-xs">
+                    <span v-for="i in o.items" :key="i.name" class="inline-block bg-white text-blue-600 rounded-lg px-2.5 py-1 border border-blue-100 text-[10px] font-black italic shadow-sm">
+                      {{ i.name }} x{{ i.quantity }}
+                    </span>
+                  </div>
+                </td>
+                <td class="p-8 font-black text-slate-900 text-xl tracking-tighter">${{ o.total }}</td>
+                <td class="p-8">
+                  <span class="px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-[0.1em] inline-block border" 
+                        :class="statusClass(o.status)">{{ o.status === 'pending' ? '待付款' : (o.status === 'paid' ? '已收款' : o.status) }}</span>
+                  <p v-if="o.cancelReason" class="text-[10px] text-red-400 mt-2 font-black italic">原因: {{ o.cancelReason }}</p>
+                </td>
+                <td class="p-8 text-right">
+                   <div class="flex flex-col items-end gap-3">
+                      <div class="flex gap-5 items-center uppercase font-black text-[10px] tracking-widest whitespace-nowrap">
+                         <button @click="viewReceipt(o)" class="text-blue-600 hover:text-blue-900 underline transition">檢視單據</button>
+                         <button v-if="o.status === 'pending'" @click="updateStatus(o.id, 'paid')" class="bg-emerald-500 text-white px-5 py-2 rounded-2xl font-black shadow-lg shadow-emerald-100 active:scale-90 transition whitespace-nowrap">確認收款</button>
+                      </div>
+                      <button v-if="o.status === 'pending'" @click="openCancelModal(o)" class="text-red-400 font-black text-[10px] underline tracking-widest opacity-40 hover:opacity-100 transition uppercase">商家取消</button>
+                   </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-if="orders.length === 0" class="p-40 text-center text-slate-200 font-black italic tracking-widest text-2xl uppercase">No records found</div>
         </div>
 
-        <!-- 商品配置 (包含新增按鈕) -->
-        <div x-show="activeTab === 'products'" class="p-6" x-cloak>
-           <button @click="openAddModal" class="w-full mb-6 py-4 border-2 border-dashed border-slate-200 rounded-2xl text-slate-400 font-black hover:bg-slate-50 transition text-sm">＋ 增加新餐點</button>
-           <div class="grid gap-4">
-             <template x-for="p in products" :key="p.id">
-                <div class="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                   <div>
-                     <p class="font-black text-slate-800" x-text="p.name"></p>
-                     <p class="text-[10px] text-slate-400 font-bold uppercase tracking-widest" x-text="p.category + ' / 庫存: ' + p.stock"></p>
-                   </div>
-                   <div class="flex gap-4 items-center">
-                      <span class="font-black text-blue-600">$<span x-text="p.price"></span></span>
-                      <button @click="openEditModal(p)" class="text-slate-400 hover:text-blue-600 transition"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg></button>
-                      <button @click="deleteProduct(p.id)" class="text-slate-400 hover:text-red-500 transition"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg></button>
-                   </div>
-                </div>
-             </template>
+        <!-- 品項管理 -->
+        <div v-if="activeTab === 'products'" class="p-10">
+           <button @click="openAddModal" class="w-full mb-10 py-8 border-2 border-dashed border-slate-200 rounded-[2.5rem] text-slate-300 font-black hover:bg-slate-50 transition text-sm uppercase tracking-[0.4em]">＋ Add New Menu Item</button>
+           <div class="grid sm:grid-cols-2 gap-8 font-bold">
+              <div v-for="p in products" :key="p.id" class="flex justify-between items-center p-8 bg-slate-50/50 rounded-[3rem] border border-slate-100 hover:border-blue-400 hover:bg-white transition-all duration-500 group relative">
+                 <div class="flex-1">
+                   <p class="font-black text-slate-800 text-xl group-hover:text-blue-600 transition">{{ p.name }}</p>
+                   <p class="text-[10px] text-slate-400 font-black uppercase tracking-widest mt-1">{{ p.category }} · 庫存 {{ p.stock }}</p>
+                   <p class="font-black text-blue-600 text-2xl mt-4 tracking-tighter">${{ p.price }}</p>
+                 </div>
+                 <div class="flex flex-col gap-3 font-black text-[10px] uppercase tracking-widest">
+                    <button @click="openEditModal(p)" class="text-blue-600 bg-white px-5 py-2.5 rounded-2xl border border-slate-100 hover:bg-blue-600 hover:text-white transition shadow-sm">編輯</button>
+                    <button @click="deleteProduct(p.id)" class="text-red-400 bg-white px-5 py-2.5 rounded-2xl border border-slate-100 hover:bg-red-500 hover:text-white transition shadow-sm">刪除</button>
+                 </div>
+              </div>
            </div>
         </div>
       </div>
     </div>
-  </template>
 
-  <!-- 彈窗組件 (收據、取消、編輯) - 代碼保持原樣 -->
-  <!-- [此處收錄收據預覽、取消原因、編輯商品等 Modal，與上個版本一致] -->
+    <!-- 彈窗模組 -->
+    
+    <!-- 取消原因彈窗 -->
+    <div v-if="showCancelModal" class="fixed inset-0 bg-slate-900/90 backdrop-blur-md flex items-center justify-center z-[250] p-6">
+      <div class="bg-white rounded-[3rem] p-12 max-w-sm w-full shadow-2xl scale-in">
+        <h3 class="text-3xl font-black mb-1 text-slate-800 tracking-tighter text-center uppercase">商家取消</h3>
+        <p class="text-xs text-slate-400 mb-10 font-black uppercase tracking-widest text-center opacity-60">填寫原因以利庫存校回</p>
+        <textarea v-model="cancelReason" rows="3" placeholder="例如：商品售完、客戶改單..." class="w-full border border-slate-100 rounded-3xl p-6 text-sm font-black bg-slate-50 outline-none focus:ring-8 focus:ring-red-50 transition-all"></textarea>
+        <div class="grid grid-cols-2 gap-4 mt-12 font-black text-[11px] tracking-widest uppercase italic">
+          <button @click="showCancelModal = false" class="py-5 text-slate-400 hover:bg-slate-50 rounded-[1.5rem] transition">返回</button>
+          <button @click="submitCancel" class="py-5 bg-red-500 text-white rounded-[1.5rem] shadow-xl shadow-red-200 active:scale-95 transition">確認取消</button>
+        </div>
+      </div>
+    </div>
 
+    <!-- 收據檢視彈窗 -->
+    <div v-if="showReceiptModal" class="fixed inset-0 bg-slate-900/95 backdrop-blur-xl flex items-center justify-center z-[200] p-4 no-print">
+      <div class="bg-white rounded-[3rem] w-full max-w-sm flex flex-col shadow-2xl overflow-hidden scale-in">
+        <div class="flex-1 overflow-y-auto p-10 bg-white custom-scrollbar">
+          <div id="print-canvas" class="bg-white p-6 border-2 border-slate-200 border-dashed relative">
+            <div class="absolute inset-0 flex items-center justify-center opacity-[0.03] pointer-events-none select-none">
+              <span class="text-[140px] font-black -rotate-45 text-slate-900 tracking-tighter leading-none">822</span>
+            </div>
+            <h2 class="text-center font-black text-2xl tracking-tighter text-slate-800 mb-1">RECEIPT</h2>
+            <p class="text-center text-[10px] text-slate-400 mb-10 font-black uppercase tracking-widest opacity-40">Merchant Portal / 822</p>
+            
+            <div class="text-[11px] space-y-2 mb-10 border-b border-dashed border-slate-200 pb-8 font-black text-slate-600 uppercase">
+              <div class="flex justify-between"><span>Order ID</span><span class="font-mono text-blue-600">{{ activeReceipt.id }}</span></div>
+              <div class="flex justify-between"><span>Name</span><span class="text-slate-800">{{ activeReceipt.name }}</span></div>
+              <div class="flex justify-between"><span>Info</span><span class="text-slate-800">{{ activeReceipt.class }} 班 {{ activeReceipt.seat ? activeReceipt.seat + ' 號' : '' }}</span></div>
+              <div class="flex justify-between opacity-40 tracking-normal text-[9px] pt-1"><span>Time</span><span>{{ activeReceipt.timestamp }}</span></div>
+            </div>
+
+            <div class="space-y-3 mb-10">
+              <div v-for="item in activeReceipt.items" :key="item.name" class="flex justify-between text-xs font-black text-slate-700 italic tracking-tighter uppercase">
+                <span>{{ item.name }} x {{ item.quantity }}</span>
+                <span>${{ item.price * item.quantity }}</span>
+              </div>
+            </div>
+
+            <div class="border-t-4 border-slate-800 pt-6 flex justify-between items-center mb-12 font-black">
+              <span class="text-xs opacity-40 uppercase tracking-widest">Amount</span>
+              <span class="text-4xl text-blue-600 tracking-tighter italic">${{ activeReceipt.total }}</span>
+            </div>
+            <p class="text-center text-[9px] text-slate-300 font-black uppercase tracking-widest italic opacity-50">Merchant Confirmation Only</p>
+          </div>
+        </div>
+        
+        <div class="p-10 bg-slate-50 flex flex-col gap-4 no-print border-t border-slate-100 font-black text-[11px] tracking-widest uppercase shadow-inner">
+          <div class="grid grid-cols-2 gap-4">
+            <button @click="window.print()" class="py-5 bg-slate-900 text-white rounded-[1.5rem] shadow-xl active:scale-95 transition">列印收據</button>
+            <button @click="downloadPDF" class="py-5 bg-blue-600 text-white rounded-[1.5rem] shadow-xl active:scale-95 transition">下載 PDF</button>
+          </div>
+          <button @click="showReceiptModal = false" class="py-4 bg-white border border-slate-200 rounded-[1.5rem] text-slate-400 hover:bg-white transition active:scale-95 text-center">關閉檢視</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 商品配置彈窗 -->
+    <div v-if="showProductModal" class="fixed inset-0 bg-slate-900/70 backdrop-blur-md flex items-center justify-center p-6 z-[250]">
+      <div class="bg-white rounded-[3rem] p-12 max-w-md w-full shadow-2xl text-left modal-scroll custom-scrollbar scale-in">
+        <h3 class="text-4xl font-black mb-1 text-slate-800 tracking-tighter italic leading-none uppercase">{{ isEditing ? 'Edit' : 'Create' }} 餐點</h3>
+        <p class="text-xs text-slate-400 mb-12 font-black uppercase tracking-[0.2em] opacity-40 italic">System Configuration</p>
+        
+        <div class="space-y-6 font-black tracking-tighter">
+          <div>
+            <label class="text-[10px] text-slate-400 uppercase ml-1 mb-2 block tracking-widest font-black uppercase">商品名稱</label>
+            <input type="text" v-model="productForm.name" class="w-full border border-slate-100 p-6 rounded-[1.5rem] bg-slate-50 outline-none focus:ring-8 focus:ring-blue-50 transition-all text-xl font-black">
+          </div>
+          <div class="grid grid-cols-2 gap-6">
+            <div><label class="text-[10px] text-slate-400 uppercase ml-1 mb-2 block tracking-widest font-black uppercase">單價</label><input type="number" v-model="productForm.price" class="w-full border border-slate-100 p-6 rounded-[1.5rem] bg-slate-50 text-2xl text-blue-600 font-black"></div>
+            <div><label class="text-[10px] text-slate-400 uppercase ml-1 mb-2 block tracking-widest font-black uppercase">庫存</label><input type="number" v-model="productForm.stock" class="w-full border border-slate-100 p-6 rounded-[1.5rem] bg-slate-50 text-2xl font-black"></div>
+          </div>
+          <div>
+            <label class="text-[10px] text-slate-400 uppercase ml-1 mb-2 block tracking-widest font-black uppercase">分類標籤</label>
+            <select v-model="productForm.category" class="w-full border border-slate-100 p-6 rounded-[1.5rem] bg-slate-50 font-black mb-4 outline-none text-base tracking-widest uppercase">
+              <option v-for="cat in defaultCategories" :key="cat" :value="cat">{{ cat }}</option>
+              <option value="自定義">＋ Custom 分類</option>
+            </select>
+            <input v-if="productForm.category === '自定義'" type="text" v-model="productForm.customCategory" placeholder="輸入分類名稱" class="w-full border border-blue-100 p-6 rounded-[1.5rem] bg-blue-50/30 outline-none focus:ring-8 focus:ring-blue-100 text-sm italic font-black">
+          </div>
+          <div><label class="text-[10px] text-slate-400 uppercase ml-1 mb-2 block tracking-widest font-black uppercase">描述</label><textarea v-model="productForm.description" rows="2" class="w-full border border-slate-100 p-6 rounded-[1.5rem] bg-slate-50 outline-none text-sm font-black"></textarea></div>
+        </div>
+        <div class="mt-12 flex gap-5 font-black text-[11px] tracking-widest uppercase tracking-widest">
+          <button @click="showProductModal = false" class="flex-1 py-5 text-slate-400 hover:bg-slate-50 rounded-[1.5rem] transition">取消</button>
+          <button @click="saveProduct" class="flex-1 py-5 bg-blue-600 text-white rounded-[1.5rem] shadow-xl hover:bg-blue-700 transition active:scale-95">確定儲存</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    const API_URL = 'https://script.google.com/macros/s/AKfycbySm6lzRRBA30Ga0qQN_I4mi0szqMXQNwKzTJmfwRLVeree-A_VqDGudrmRTu7wUGc2/exec';
+    
+    const { createApp, ref, onMounted, computed } = Vue;
+
+    createApp({
+      setup() {
+        const isLoggedIn = ref(false);
+        const password = ref('');
+        const activeTab = ref('orders');
+        const orders = ref([]);
+        const products = ref([]);
+        const stats = ref({ totalOrders: 0, totalRevenue: 0, paidRevenue: 0, ranking: [] });
+        const loading = ref(false);
+        const submitting = ref(false);
+
+        const msg = ref({ show: false, content: '', type: 'info' });
+        const showMsg = (content, type = 'info') => {
+          msg.value = { show: true, content, type };
+          setTimeout(() => { msg.value.show = false; }, 3500);
+        };
+
+        const showProductModal = ref(false);
+        const isEditing = ref(false);
+        const productForm = ref({ id: '', name: '', price: 0, description: '', category: '熱食', stock: 100, customCategory: '' });
+        const defaultCategories = ['熱食', '飲品', '點心', '遊戲', '其他'];
+        const showReceiptModal = ref(false);
+        const activeReceipt = ref({ items: [], id: '', name: '', class: '', seat: '', total: 0, timestamp: '' });
+        const showCancelModal = ref(false);
+        const cancelReason = ref('');
+        const targetOrder = ref(null);
+
+        const tryLogin = async () => {
+          if (!password.value) { showMsg('請輸入密碼', 'error'); return; }
+          loading.value = true;
+          try {
+            const res = await fetch(`${API_URL}?action=checkLogin&pwd=${encodeURIComponent(password.value)}`, { cache: 'no-store' });
+            const json = await res.json();
+            if (json.status === 'success') {
+              isLoggedIn.value = true;
+              sessionStorage.setItem('admin_pwd', password.value);
+              await refresh();
+              showMsg('管理系統啟動成功');
+            } else {
+              showMsg('密碼不正確', 'error');
+              sessionStorage.removeItem('admin_pwd');
+            }
+          } catch (e) { 
+             console.error("連線錯誤:", e);
+             showMsg('API 連線失敗', 'error'); 
+          } finally { loading.value = false; }
+        };
+
+        const refresh = async () => {
+          if (!isLoggedIn.value) return;
+          loading.value = true;
+          try {
+            const res = await fetch(`${API_URL}?action=getAppData&pwd=${encodeURIComponent(password.value)}`);
+            const json = await res.json();
+            orders.value = json.data.orders || [];
+            products.value = json.data.products || [];
+            const sRes = await fetch(`${API_URL}?action=getSalesStats&pwd=${encodeURIComponent(password.value)}`);
+            const sJson = await sRes.json();
+            stats.value = sJson.data || stats.value;
+          } catch(e) { showMsg('資料更新失敗', 'error'); }
+          finally { loading.value = false; }
+        };
+
+        const postAction = async (payload) => {
+          submitting.value = true;
+          try {
+            await fetch(API_URL, {
+              method: 'POST',
+              mode: 'no-cors',
+              body: JSON.stringify({ ...payload, pwd: password.value })
+            });
+            setTimeout(() => { refresh(); submitting.value = false; showMsg('操作成功執行'); }, 1800);
+          } catch (e) { submitting.value = false; showMsg('連線錯誤', 'error'); }
+        };
+
+        const updateStatus = (id, s) => postAction({ action: 'updateOrderStatus', orderId: id, newStatus: s });
+        const openCancelModal = (o) => { targetOrder.value = o; showCancelModal.value = true; };
+        const submitCancel = () => {
+          if (!cancelReason.value.trim()) { showMsg('必須填寫原因', 'error'); return; }
+          postAction({ action: 'cancelOrder', orderId: targetOrder.value.id, reason: cancelReason.value });
+          showCancelModal.value = false;
+          cancelReason.value = '';
+        };
+
+        const openAddModal = () => { isEditing.value = false; productForm.value = { id: '', name: '', price: 0, description: '', category: '熱食', stock: 100, customCategory: '' }; showProductModal.value = true; };
+        const openEditModal = (p) => { isEditing.value = true; productForm.value = { ...p, customCategory: '' }; showProductModal.value = true; };
+        const saveProduct = () => {
+          if (!productForm.value.name) return showMsg('名稱不可為空', 'error');
+          let cat = productForm.value.category === '自定義' ? productForm.value.customCategory : productForm.value.category;
+          postAction({ action: isEditing.value ? 'updateProduct' : 'addProduct', data: { ...productForm.value, category: cat } });
+          showProductModal.value = false;
+        };
+
+        const deleteProduct = (id) => { if (confirm('確定永久移除？')) postAction({ action: 'deleteProduct', id }); };
+        const viewReceipt = (o) => { activeReceipt.value = o; showReceiptModal.value = true; };
+        
+        const downloadPDF = () => {
+          const opt = { margin: 0.5, filename: `822_Order_${activeReceipt.value.id}.pdf`, html2canvas: { scale: 3, useCORS: true }, jsPDF: { unit: 'in', format: 'a5', orientation: 'portrait' } };
+          html2pdf().set(opt).from(document.getElementById('print-canvas')).save();
+        };
+
+        const statusClass = (s) => {
+          if (s === 'pending') return 'bg-amber-50 text-amber-600 border-amber-200';
+          if (s === 'paid') return 'bg-emerald-50 text-emerald-600 border-emerald-200';
+          if (s === 'cancelled') return 'bg-red-50 text-red-500 border-red-200 italic font-black';
+          return 'bg-blue-50 text-blue-600 border-blue-100';
+        };
+
+        const logout = () => { sessionStorage.removeItem('admin_pwd'); location.reload(); };
+        const sortedOrders = computed(() => [...orders.value].sort((a, b) => b.id.localeCompare(a.id)));
+
+        onMounted(() => {
+          const savedPass = sessionStorage.getItem('admin_pwd');
+          if (savedPass) { password.value = savedPass; tryLogin(); }
+        });
+
+        return {
+          isLoggedIn, password, activeTab, orders, sortedOrders, products, stats, loading, submitting,
+          showProductModal, isEditing, productForm, defaultCategories, showReceiptModal, activeReceipt,
+          showCancelModal, cancelReason, targetOrder, msg,
+          tryLogin, refresh, updateStatus, openCancelModal, submitCancel, openAddModal, openEditModal, saveProduct, deleteProduct, viewReceipt, downloadPDF, statusClass, logout
+        };
+      }
+    }).mount('#app');
+  </script>
 </body>
 </html>
