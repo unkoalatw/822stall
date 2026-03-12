@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <title>園遊會後台管理</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <script>
+    const API_URL = 'https://script.google.com/macros/s/AKfycbySm6lzRRBA30Ga0qQN_I4mi0szqMXQNwKzTJmfwRLVeree-A_VqDGudrmRTu7wUGc2/exec';
+
+    document.addEventListener('alpine:init', () => {
+      Alpine.data('adminApp', () => ({
+        orders: [], 
+        products: [],
+        stats: { totalOrders: 0, totalRevenue: 0, paidRevenue: 0 }, 
+        loading: true,
+        showProductModal: false,
+        newProduct: { name: '', price: 0, description: '', category: '熱食', stock: 100 },
+
+        async init() { 
+          await this.refresh(); 
+        },
+
+        async refresh() {
+          this.loading = true;
+          try {
+            const res = await fetch(`${API_URL}?action=getAppData`);
+            const json = await res.json();
+            if (json.status === 'success') {
+              this.orders = json.data.orders || [];
+              this.products = json.data.products || [];
+            }
+
+            const sRes = await fetch(`${API_URL}?action=getSalesStats`);
+            const sJson = await sRes.json();
+            if (sJson.status === 'success') {
+              this.stats = sJson.data || { totalOrders: 0, totalRevenue: 0, paidRevenue: 0 };
+            }
+          } catch (err) {
+            console.error("資料讀取失敗:", err);
+          } finally {
+            this.loading = false;
+          }
+        },
+
+        async saveProduct() {
+          if (!this.newProduct.name || this.newProduct.price <= 0) {
+            alert("請填寫完整的商品資訊");
+            return;
+          }
+          this.loading = true;
+          try {
+            await fetch(API_URL, {
+              method: 'POST',
+              mode: 'no-cors',
+              body: JSON.stringify({ 
+                action: 'addProduct', 
+                data: this.newProduct 
+              })
+            });
+            // 重置表單並關閉視窗
+            this.newProduct = { name: '', price: 0, description: '', category: '熱食', stock: 100 };
+            this.showProductModal = false;
+            // 延遲更新以確保 GAS 處理完畢
+            setTimeout(() => this.refresh(), 1000);
+          } catch (err) {
+            console.error("新增商品失敗:", err);
+            this.loading = false;
+          }
+        },
+
+        async updateStatus(id, status) {
+          try {
+            await fetch(API_URL, {
+              method: 'POST',
+              mode: 'no-cors',
+              body: JSON.stringify({ 
+                action: 'updateOrderStatus', 
+                orderId: id, 
+                newStatus: status 
+              })
+            });
+            setTimeout(() => this.refresh(), 1000);
+          } catch (err) {
+            console.error("更新狀態失敗:", err);
+          }
+        }
+      }));
+    });
+  </script>
+  <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+
+  <style>
+    [x-cloak] { display: none !important; }
+  </style>
+</head>
+<body class="bg-slate-100 p-4 md:p-8" x-data="adminApp" x-cloak>
+  <div class="max-w-6xl mx-auto">
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
+      <h1 class="text-2xl md:text-3xl font-bold">園遊會管理後台</h1>
+      <div class="flex gap-2">
+        <button @click="showProductModal = true" 
+                class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition flex items-center gap-2 shadow-sm">
+          <span>＋ 新增商品</span>
+        </button>
+        <button @click="refresh" 
+                class="bg-white border border-slate-200 px-4 py-2 rounded-lg text-slate-600 hover:bg-slate-50 transition flex items-center gap-2 shadow-sm"
+                :disabled="loading">
+          <template x-if="loading">
+            <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+          </template>
+          重新整理
+        </button>
+      </div>
+    </div>
+
+    <!-- 數據概覽 -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+      <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+        <p class="text-slate-500 text-sm font-medium uppercase tracking-wider">總訂單數</p>
+        <p class="text-3xl font-bold mt-1" x-text="stats.totalOrders"></p>
+      </div>
+      <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+        <p class="text-slate-500 text-sm font-medium uppercase tracking-wider">預計總營收</p>
+        <p class="text-3xl font-bold text-blue-600 mt-1" x-text="'$' + stats.totalRevenue"></p>
+      </div>
+      <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+        <p class="text-slate-500 text-sm font-medium uppercase tracking-wider">已實收金額</p>
+        <p class="text-3xl font-bold text-green-600 mt-1" x-text="'$' + stats.paidRevenue"></p>
+      </div>
+    </div>
+
+    <!-- 標籤切換 -->
+    <div class="mb-6 flex gap-4 border-b border-slate-200">
+      <button class="pb-2 px-1 font-bold border-b-2" :class="true ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400'">訂單管理</button>
+    </div>
+
+    <!-- 訂單明細 -->
+    <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="w-full text-left">
+          <thead class="bg-slate-50 border-b border-slate-100">
+            <tr>
+              <th class="p-4 text-sm font-semibold text-slate-600">訂購人</th>
+              <th class="p-4 text-sm font-semibold text-slate-600">購買品項</th>
+              <th class="p-4 text-sm font-semibold text-slate-600">總金額</th>
+              <th class="p-4 text-sm font-semibold text-slate-600">狀態</th>
+              <th class="p-4 text-sm font-semibold text-slate-600 text-right">操作</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">
+            <template x-for="o in orders" :key="o.id">
+              <tr class="hover:bg-slate-50/50 transition-colors">
+                <td class="p-4">
+                  <p class="font-bold text-slate-800" x-text="o.name"></p>
+                  <p class="text-xs text-slate-400 font-mono" x-text="o.phone"></p>
+                </td>
+                <td class="p-4 text-sm text-slate-600">
+                  <template x-for="i in o.items">
+                    <span class="inline-block bg-blue-50 text-blue-700 rounded-md px-2 py-0.5 mr-1 mb-1 border border-blue-100 text-xs" x-text="i.name + ' x' + i.quantity"></span>
+                  </template>
+                </td>
+                <td class="p-4 font-semibold text-slate-900" x-text="'$' + o.total"></td>
+                <td class="p-4">
+                  <span class="px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide" 
+                        :class="{
+                          'bg-amber-100 text-amber-700': o.status === 'pending',
+                          'bg-emerald-100 text-emerald-700': o.status === 'paid',
+                          'bg-sky-100 text-sky-700': o.status === 'completed'
+                        }" x-text="o.status === 'pending' ? '待付款' : (o.status === 'paid' ? '已收款' : '已領取')"></span>
+                </td>
+                <td class="p-4 text-right">
+                  <button x-show="o.status === 'pending'" 
+                          @click="updateStatus(o.id, 'paid')" 
+                          class="bg-emerald-600 text-white text-xs px-4 py-1.5 rounded-lg hover:bg-emerald-700 transition shadow-sm">
+                    確認收款
+                  </button>
+                  <span x-show="o.status !== 'pending'" class="text-slate-300 text-xs italic">已處理</span>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+      <div x-show="orders.length === 0 && !loading" class="p-16 text-center text-slate-400">
+        目前還沒有任何訂單喔！
+      </div>
+    </div>
+  </div>
+
+  <!-- 新增商品彈窗 -->
+  <div x-show="showProductModal" 
+       class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+       x-transition.opacity>
+    <div class="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl" @click.away="showProductModal = false">
+      <h3 class="text-2xl font-bold mb-6 text-slate-800">新增園遊會商品</h3>
+      <div class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">商品名稱</label>
+          <input type="text" x-model="newProduct.name" class="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-blue-500 transition">
+        </div>
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1">價格</label>
+            <input type="number" x-model="newProduct.price" class="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-blue-500 transition">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1">庫存量</label>
+            <input type="number" x-model="newProduct.stock" class="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-blue-500 transition">
+          </div>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">分類</label>
+          <select x-model="newProduct.category" class="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-blue-500 transition bg-white">
+            <option value="熱食">熱食</option>
+            <option value="飲品">飲品</option>
+            <option value="點心">點心</option>
+            <option value="遊戲">遊戲/其他</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">商品描述</label>
+          <textarea x-model="newProduct.description" rows="3" class="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-blue-500 transition"></textarea>
+        </div>
+      </div>
+      <div class="mt-8 flex gap-3">
+        <button @click="showProductModal = false" class="flex-1 px-4 py-3 rounded-xl text-slate-500 hover:bg-slate-100 transition font-bold">取消</button>
+        <button @click="saveProduct" class="flex-1 bg-blue-600 text-white px-4 py-3 rounded-xl hover:bg-blue-700 transition font-bold shadow-lg shadow-blue-200">儲存商品</button>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>
