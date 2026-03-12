@@ -1,1 +1,389 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://unpkg.com https://www.googletagmanager.com https://cdnjs.cloudflare.com; img-src 'self' data: blob: *; worker-src 'self' blob: *; connect-src 'self' https://script.google.com https://script.googleusercontent.com;">
+  
+  <title>園遊會美食訂購</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- 引入 PDF 轉換庫 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  
+  <script>
+    const API_URL = 'https://script.google.com/macros/s/AKfycbySm6lzRRBA30Ga0qQN_I4mi0szqMXQNwKzTJmfwRLVeree-A_VqDGudrmRTu7wUGc2/exec';
 
+    document.addEventListener('alpine:init', () => {
+      Alpine.data('fairApp', () => ({
+        view: 'shop', 
+        loading: true, 
+        cart: [],
+        products: [],
+        orderHistory: [],
+        orderForm: { name: '', phone: '', identity: 'student', class: '', seat: '' },
+        // 預設空的物件結構，避免 ReferenceError
+        activeReceipt: { items: [], id: '', name: '', class: '', seat: '', total: 0, timestamp: '' },
+        successShow: false,
+        submitting: false,
+        showReceiptModal: false,
+        
+        showCancelModal: false,
+        cancelReason: '',
+        targetOrder: null,
+
+        async init() {
+          const savedHistory = localStorage.getItem('fair_orders');
+          if (savedHistory) this.orderHistory = JSON.parse(savedHistory);
+          await this.loadProducts();
+        },
+
+        async loadProducts() {
+          this.loading = true;
+          try {
+            const res = await fetch(`${API_URL}?action=getAppData`);
+            const json = await res.json();
+            if (json.status === 'success') {
+              this.products = json.data.products || [];
+            }
+          } catch (err) { 
+            console.error("載入失敗:", err); 
+          } finally { 
+            setTimeout(() => { this.loading = false; }, 800);
+          }
+        },
+
+        addToCart(p) {
+          const exist = this.cart.find(item => item.id === p.id);
+          if (exist) exist.quantity++;
+          else this.cart.push({ ...p, quantity: 1 });
+        },
+
+        removeFromCart(index) { this.cart.splice(index, 1); },
+        get cartTotal() { return this.cart.reduce((s, i) => s + (i.price * i.quantity), 0); },
+
+        async checkout() {
+          if (!this.orderForm.name || !this.orderForm.phone || !this.orderForm.class) { 
+            alert('請填寫完整資訊'); return; 
+          }
+          if (this.orderForm.identity === 'student' && !this.orderForm.seat) { 
+            alert('請填寫座號'); return; 
+          }
+          if (this.cart.length === 0) return;
+
+          this.submitting = true;
+          try {
+            await fetch(API_URL, {
+              method: 'POST',
+              mode: 'no-cors',
+              body: JSON.stringify({ action: 'submitOrder', data: { ...this.orderForm, items: this.cart, total: this.cartTotal } })
+            });
+            
+            const newOrder = {
+              id: 'ORD' + Date.now(),
+              ...this.orderForm,
+              items: JSON.parse(JSON.stringify(this.cart)),
+              total: this.cartTotal,
+              timestamp: new Date().toLocaleString('zh-TW'),
+              status: 'pending'
+            };
+            
+            this.orderHistory.unshift(newOrder);
+            localStorage.setItem('fair_orders', JSON.stringify(this.orderHistory));
+            this.successShow = true;
+            this.cart = [];
+          } catch (err) { alert("提交訂單時發生連線錯誤"); } 
+          finally { this.submitting = false; }
+        },
+
+        async performCancel() {
+          if (!this.cancelReason.trim()) { alert("請輸入取消原因"); return; }
+          this.submitting = true;
+          try {
+            await fetch(API_URL, {
+              method: 'POST',
+              mode: 'no-cors',
+              body: JSON.stringify({ action: 'cancelOrder', orderId: this.targetOrder.id, reason: this.cancelReason })
+            });
+            
+            const idx = this.orderHistory.findIndex(o => o.id === this.targetOrder.id);
+            if (idx !== -1) {
+              this.orderHistory[idx].status = 'cancelled';
+              this.orderHistory[idx].cancelReason = this.cancelReason;
+              localStorage.setItem('fair_orders', JSON.stringify(this.orderHistory));
+            }
+            
+            this.showCancelModal = false;
+            this.cancelReason = '';
+          } catch (err) { alert("取消失敗"); }
+          finally { this.submitting = false; }
+        },
+
+        openReceipt(order) {
+          this.activeReceipt = order;
+          this.showReceiptModal = true;
+        },
+
+        downloadPDF() {
+          const element = document.getElementById('receipt-box');
+          const opt = {
+            margin: [0.5, 0.5],
+            filename: `Receipt_${this.activeReceipt.id}.pdf`,
+            image: { type: 'jpeg', quality: 0.98 },
+            html2canvas: { scale: 3, useCORS: true },
+            jsPDF: { unit: 'in', format: 'a5', orientation: 'portrait' }
+          };
+          html2pdf().set(opt).from(element).save();
+        }
+      }));
+    });
+  </script>
+  <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <style>
+    [x-cloak] { display: none !important; }
+    html { scroll-behavior: smooth; }
+
+    @keyframes barProgress {
+      0% { width: 0%; }
+      100% { width: 100%; }
+    }
+    .loading-bar {
+      height: 4px;
+      background: #3b82f6;
+      animation: barProgress 2s infinite ease-in-out;
+    }
+
+    @media print {
+      body * { visibility: hidden !important; }
+      #receipt-box, #receipt-box * { visibility: visible !important; }
+      #receipt-box { 
+        position: absolute; 
+        left: 0; 
+        top: 0; 
+        width: 100% !important; 
+        border: none !important;
+        margin: 0 !important;
+        padding: 40px !important;
+      }
+      .no-print { display: none !important; }
+    }
+
+    .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+    .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900 font-sans antialiased" x-data="fairApp" x-cloak>
+
+  <!-- 啟動載入畫面 -->
+  <div x-show="loading" class="fixed inset-0 bg-white z-[200] flex flex-col items-center justify-center p-6 text-center">
+    <div class="mb-6">
+      <div class="w-12 h-12 border-4 border-blue-100 border-t-blue-600 rounded-full animate-spin"></div>
+    </div>
+    <h2 class="text-lg font-black text-slate-800 tracking-widest">商品搜尋中...</h2>
+  </div>
+
+  <!-- 提交加載遮罩 -->
+  <div x-show="submitting" class="fixed inset-0 z-[150] no-print">
+    <div class="loading-bar w-full absolute top-0 left-0"></div>
+    <div class="absolute inset-0 bg-white/80 backdrop-blur-sm flex flex-col items-center justify-center">
+      <div class="animate-spin rounded-full h-10 w-10 border-4 border-blue-600 border-t-transparent mb-4"></div>
+      <p class="font-bold text-blue-600">正在傳送訂單...</p>
+    </div>
+  </div>
+
+  <nav class="bg-white/90 backdrop-blur-md border-b sticky top-0 z-50 no-print">
+    <div class="max-w-4xl mx-auto px-4 h-16 flex justify-between items-center">
+      <div class="flex items-center gap-2">
+        <div class="w-8 h-8 bg-blue-600 text-white flex items-center justify-center rounded-lg font-black italic">8</div>
+        <h1 class="font-black text-slate-800 tracking-tighter">822 園遊會</h1>
+      </div>
+      <div class="flex gap-4 sm:gap-8 font-bold text-sm">
+        <button @click="view = 'shop'" class="py-2" :class="view==='shop'?'text-blue-600 border-b-2 border-blue-600':'text-slate-400'">點餐</button>
+        <button @click="view = 'history'" class="py-2" :class="view==='history'?'text-blue-600 border-b-2 border-blue-600':'text-slate-400'">紀錄</button>
+      </div>
+    </div>
+  </nav>
+
+  <main class="max-w-4xl mx-auto p-4 md:p-8 no-print pb-24">
+    <!-- 商店頁面 -->
+    <template x-if="view === 'shop'">
+      <div class="grid lg:grid-cols-5 gap-8">
+        <div class="lg:col-span-3 space-y-6">
+          <h2 class="text-2xl font-black text-slate-800">今日美食</h2>
+          <div class="grid sm:grid-cols-2 lg:grid-cols-1 gap-4">
+            <template x-for="p in products" :key="p.id">
+              <div class="bg-white p-5 rounded-3xl border border-slate-100 flex justify-between items-center hover:shadow-xl transition duration-300">
+                <div class="flex-1 pr-4">
+                  <p class="font-bold text-lg text-slate-800" x-text="p.name"></p>
+                  <p class="text-xs text-slate-400 mt-1 line-clamp-1" x-text="p.description"></p>
+                  <div class="flex items-center gap-2 mt-2">
+                    <span class="text-blue-600 font-black text-xl">$<span x-text="p.price"></span></span>
+                    <span class="text-[10px] bg-slate-50 text-slate-400 px-2 py-0.5 rounded font-bold" x-text="p.category"></span>
+                  </div>
+                </div>
+                <button @click="addToCart(p)" class="bg-slate-900 text-white w-12 h-12 rounded-2xl flex items-center justify-center hover:bg-blue-600 transition shrink-0 active:scale-90">＋</button>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- 購物車卡片 -->
+        <div class="lg:col-span-2">
+          <div class="bg-white p-6 rounded-[2rem] border border-slate-100 sticky top-24 shadow-sm">
+            <h3 class="font-black text-lg mb-6">我的清單</h3>
+            <div class="space-y-3 mb-6 max-h-40 overflow-y-auto custom-scrollbar">
+              <template x-for="(item, idx) in cart" :key="idx">
+                <div class="flex justify-between text-sm items-center py-1">
+                  <span class="font-bold text-slate-700" x-text="item.name + ' x' + item.quantity"></span>
+                  <div class="flex items-center gap-3">
+                    <span class="font-black text-slate-900">$<span x-text="item.price*item.quantity"></span></span>
+                    <button @click="removeFromCart(idx)" class="text-red-400 hover:text-red-600 font-black px-1">✕</button>
+                  </div>
+                </div>
+              </template>
+              <div x-show="cart.length===0" class="text-slate-300 italic text-center py-4 text-xs font-bold uppercase tracking-widest">目前沒有品項</div>
+            </div>
+            <div class="border-t border-dashed border-slate-200 pt-4 mb-6 flex justify-between items-center">
+              <span class="text-xs text-slate-400 font-bold">總計金額</span>
+              <span class="font-black text-2xl text-blue-600">$<span x-text="cartTotal"></span></span>
+            </div>
+            
+            <div class="space-y-3">
+              <div class="flex gap-1 bg-slate-50 p-1 rounded-xl border border-slate-100">
+                <button @click="orderForm.identity='student'" class="flex-1 py-2 rounded-lg text-xs font-black transition" :class="orderForm.identity==='student'?'bg-white shadow text-blue-600':'text-slate-400'">學生</button>
+                <button @click="orderForm.identity='teacher'" class="flex-1 py-2 rounded-lg text-xs font-black transition" :class="orderForm.identity==='teacher'?'bg-white shadow text-blue-600':'text-slate-400'">老師</button>
+              </div>
+              <input type="text" x-model="orderForm.name" placeholder="訂購人姓名" class="w-full border border-slate-100 p-3 rounded-xl text-sm bg-slate-50/50 font-bold outline-none focus:ring-2 focus:ring-blue-500">
+              <div class="flex gap-2">
+                <input type="text" x-model="orderForm.class" placeholder="班級" class="w-1/2 border border-slate-100 p-3 rounded-xl text-sm bg-slate-50/50 font-bold">
+                <input x-show="orderForm.identity==='student'" type="number" x-model="orderForm.seat" placeholder="座號" class="w-1/2 border border-slate-100 p-3 rounded-xl text-sm bg-slate-50/50 font-bold">
+              </div>
+              <input type="tel" x-model="orderForm.phone" placeholder="聯絡電話" class="w-full border border-slate-100 p-3 rounded-xl text-sm bg-slate-50/50 font-bold">
+              <button @click="checkout" :disabled="submitting || cart.length===0" class="w-full bg-blue-600 text-white py-4 rounded-2xl font-black shadow-xl shadow-blue-100 transition hover:bg-blue-700 disabled:opacity-30">確認預訂</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <!-- 紀錄頁面 -->
+    <template x-if="view === 'history'">
+      <div class="space-y-4">
+        <h2 class="text-2xl font-black text-slate-800 mb-6 tracking-tight">我的預訂歷程</h2>
+        <template x-for="h in orderHistory" :key="h.id">
+          <div class="bg-white p-6 rounded-[2rem] border border-slate-100 flex flex-col sm:flex-row justify-between sm:items-center shadow-sm gap-4">
+            <div class="flex-1 text-left">
+              <div class="flex items-center gap-2 mb-1">
+                <span class="font-mono text-[10px] text-slate-300 font-bold" x-text="h.id"></span>
+                <span x-show="h.status === 'cancelled'" class="bg-red-50 text-red-500 text-[9px] font-black px-2 py-0.5 rounded-full border border-red-100">已取消</span>
+              </div>
+              <p class="font-black text-slate-700" x-text="h.timestamp"></p>
+              <p class="text-sm text-slate-400 font-bold">金額：$<span x-text="h.total"></span> / 品項：<span x-text="h.items.length"></span> 個</p>
+            </div>
+            <div class="flex gap-2 w-full sm:w-auto">
+               <button x-show="h.status !== 'cancelled'" @click="targetOrder = h; showCancelModal = true" class="flex-1 sm:flex-none bg-white border border-red-200 text-red-500 px-4 py-2 rounded-xl font-black text-xs hover:bg-red-50 transition">取消</button>
+               <button @click="openReceipt(h)" class="flex-1 sm:flex-none bg-blue-600 text-white px-5 py-2 rounded-xl font-black text-xs hover:bg-blue-700 shadow-lg shadow-blue-100 transition">查看收據</button>
+            </div>
+          </div>
+        </template>
+        <div x-show="orderHistory.length===0" class="text-slate-300 text-center py-20 flex flex-col items-center">
+           <p class="font-black uppercase text-xs tracking-widest">尚無紀錄</p>
+        </div>
+      </div>
+    </template>
+  </main>
+
+  <!-- 取消彈窗 -->
+  <div x-show="showCancelModal" class="fixed inset-0 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center z-[70] p-6" x-transition x-cloak>
+    <div @click.away="showCancelModal = false" class="bg-white rounded-[2rem] p-8 max-w-sm w-full shadow-2xl">
+      <h3 class="text-xl font-black mb-4 text-slate-800 text-center">確定要取消嗎？</h3>
+      <textarea x-model="cancelReason" rows="3" placeholder="請輸入取消原因..." class="w-full border border-slate-100 rounded-2xl p-4 text-sm font-bold bg-slate-50 outline-none focus:ring-2 focus:ring-red-200 transition"></textarea>
+      <div class="grid grid-cols-2 gap-4 mt-6">
+        <button @click="showCancelModal = false" class="py-3 font-bold text-slate-400 hover:bg-slate-50 rounded-2xl transition">不取消</button>
+        <button @click="performCancel" class="py-3 bg-red-500 text-white font-black rounded-2xl shadow-lg hover:bg-red-600 transition">確定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 收據預覽視窗 (無框架極簡版) -->
+  <div x-show="showReceiptModal" x-transition class="fixed inset-0 bg-slate-900/90 backdrop-blur-md flex items-center justify-center z-[80] p-4 no-print" x-cloak>
+    <div @click.away="showReceiptModal = false" class="bg-white rounded-3xl w-full max-w-sm flex flex-col shadow-2xl overflow-hidden">
+      
+      <!-- 收據主體 -->
+      <div class="flex-1 overflow-y-auto custom-scrollbar p-8 bg-white">
+        <div id="receipt-box" class="bg-white p-6 border-2 border-slate-200 border-dashed relative">
+          <div class="absolute inset-0 flex items-center justify-center opacity-[0.03] pointer-events-none select-none">
+            <span class="text-8xl font-black -rotate-45">822</span>
+          </div>
+          
+          <h2 class="text-center font-black text-2xl tracking-tighter text-slate-800 mb-1">822 園遊會收據</h2>
+          <p class="text-center text-[10px] text-slate-400 mb-8 font-black uppercase tracking-widest">Official Receipt</p>
+          
+          <div class="text-xs space-y-2 mb-8 border-b border-dashed border-slate-200 pb-6 font-bold text-slate-600">
+            <div class="flex justify-between uppercase"><span class="opacity-50 tracking-tighter">單號 ID</span><span class="font-mono text-blue-600" x-text="activeReceipt.id"></span></div>
+            <div class="flex justify-between"><span>姓名 Name</span><span x-text="activeReceipt.name" class="text-slate-800"></span></div>
+            <div class="flex justify-between"><span>班級 Class</span><span x-text="activeReceipt.class + ' 班 ' + (activeReceipt.seat ? activeReceipt.seat + ' 號' : '')" class="text-slate-800"></span></div>
+            <div class="flex justify-between"><span>時間 Time</span><span x-text="activeReceipt.timestamp" class="font-medium text-slate-400"></span></div>
+          </div>
+
+          <div class="space-y-2 mb-8">
+            <template x-if="activeReceipt.items && activeReceipt.items.length">
+              <template x-for="(itm, idx) in activeReceipt.items" :key="idx">
+                <div class="flex justify-between text-sm font-black text-slate-700 italic">
+                  <span x-text="itm.name + ' x ' + itm.quantity"></span>
+                  <span x-text="'$' + itm.price*itm.quantity"></span>
+                </div>
+              </template>
+            </template>
+          </div>
+
+          <div class="border-t-2 border-slate-800 pt-4 flex justify-between items-center mb-8">
+            <span class="text-xs font-black opacity-40 uppercase tracking-widest">總額 Total</span>
+            <span class="font-black text-3xl text-blue-600 tracking-tighter" x-text="'$' + activeReceipt.total"></span>
+          </div>
+
+          <div class="bg-blue-50 p-4 rounded-xl border border-blue-100 text-center mb-6">
+            <p class="text-[11px] font-black text-blue-700 mb-1 leading-tight tracking-tight uppercase">⚠️ 重要取貨憑證 ⚠️</p>
+            <p class="text-[10px] text-blue-500 font-bold leading-tight">請持電子或紙本收據前來收貨</p>
+          </div>
+          <p class="text-center text-[9px] text-slate-300 font-bold">請於 3/21 前至 822 班完成繳費</p>
+        </div>
+      </div>
+
+      <!-- 控制按鈕 (分開查看、列印、下載) -->
+      <div class="p-6 bg-slate-50 flex flex-col gap-3 no-print border-t border-slate-100">
+        <div class="grid grid-cols-2 gap-3">
+          <button @click="window.print()" class="py-3 bg-slate-800 text-white rounded-xl font-black text-xs uppercase tracking-widest shadow-lg">列印收據</button>
+          <button @click="downloadPDF()" class="py-3 bg-blue-600 text-white rounded-xl font-black text-xs uppercase tracking-widest shadow-lg">下載 PDF</button>
+        </div>
+        <button @click="showReceiptModal = false" class="py-3 bg-white border border-slate-200 rounded-xl font-bold text-slate-400 text-xs uppercase transition hover:bg-slate-100">關閉視窗</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 成功預訂大彈窗 (修復手機溢出) -->
+  <div x-show="successShow" x-transition class="fixed inset-0 bg-blue-600 z-[100] overflow-y-auto no-print" x-cloak>
+    <div class="min-h-screen flex items-center justify-center p-6">
+      <div class="text-center text-white max-w-sm w-full py-10">
+        <div class="w-20 h-20 bg-white/10 rounded-[1.5rem] flex items-center justify-center mx-auto mb-8 text-5xl animate-bounce shadow-2xl">🍕</div>
+        <h3 class="text-3xl font-black mb-4 tracking-tighter">預訂成功！</h3>
+        <p class="text-blue-100 mb-6 font-bold leading-relaxed">訂單已記錄。請於 <span class="bg-white text-blue-600 px-2 py-0.5 rounded mx-1 shadow-sm">3/21 前</span> 前往 <span class="bg-white text-blue-600 px-2 py-0.5 rounded mx-1 shadow-sm">822 班</span> 完成繳費。</p>
+        
+        <div class="bg-blue-500/30 p-5 rounded-[1.5rem] mb-10 border border-white/10 text-left backdrop-blur-sm shadow-inner">
+          <p class="text-xs font-black mb-2 flex items-center gap-2"><svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v2H7a1 1 0 100 2h2v2a1 1 0 102 0v-2h2a1 1 0 100-2h-2V7z"></path></svg>取貨重要提醒 (Attention)</p>
+          <div class="text-[11px] text-blue-50 space-y-1 font-medium leading-relaxed opacity-90">
+            <p>1. 繳費後請妥善保存電子或紙本收據。</p>
+            <p>2. 收貨當天須出示本收據方可領取餐點。</p>
+            <p>3. 逾期未繳費之訂單將視同棄單處理。</p>
+          </div>
+        </div>
+        
+        <button @click="successShow = false; view = 'history'" class="w-full bg-white text-blue-600 py-4 rounded-2xl font-black text-lg shadow-2xl hover:bg-blue-50 transition transform active:scale-95 duration-200">
+          查看並下載電子收據
+        </button>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>
